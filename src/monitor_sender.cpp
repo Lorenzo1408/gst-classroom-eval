@@ -15,6 +15,7 @@
 #include <gst/gst.h>
 #include <glib-unix.h>
 
+#include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <string>
@@ -24,6 +25,12 @@ static constexpr int EXIT_INVALID_ARGS  = 2;
 
 // Time allowed between sending EOS and receiving it back on the bus.
 static constexpr guint EOS_TIMEOUT_SECONDS = 5;
+
+// Dynamic property: videobalance brightness changes every 5 s through
+// this cycle (visible in the preview, the recording and the network stream).
+static constexpr guint   DYNAMIC_PERIOD_MS     = 5000;
+static constexpr gdouble BRIGHTNESS_CYCLE[]    = {0.20, 0.0, -0.20, 0.0};
+static constexpr size_t  BRIGHTNESS_CYCLE_SIZE = G_N_ELEMENTS(BRIGHTNESS_CYCLE);
 
 // Shown in the overlay to identify the team.
 static const char *TEAM_MEMBERS = "Lorenzo Bravard";
@@ -45,12 +52,15 @@ struct Options {
 /** Runtime state shared with the GLib callbacks. */
 struct App {
   GstElement *pipeline     = nullptr;
+  GstElement *balance      = nullptr;   // "video_balance", owned reference
   GMainLoop  *loop         = nullptr;
+  size_t      brightness_step = 0;
   bool        eos_sent     = false;
   bool        eos_received = false;
   bool        failed       = false;
   guint       duration_id  = 0;   // GLib source ids, 0 = not active
   guint       watchdog_id  = 0;
+  guint       dynamic_id   = 0;
   guint       sigint_id    = 0;
   guint       sigterm_id   = 0;
 };
@@ -175,6 +185,20 @@ static std::string build_pipeline_description(const Options &opt) {
       "    ! udpsink name=net_sink host=127.0.0.1 port=" + std::to_string(opt.port);
 }
 
+/** Every 5 s: set the next brightness on the named element and log it. */
+static gboolean on_dynamic_property(gpointer data) {
+  App *app = static_cast<App *>(data);
+  const gdouble requested = BRIGHTNESS_CYCLE[app->brightness_step];
+  app->brightness_step = (app->brightness_step + 1) % BRIGHTNESS_CYCLE_SIZE;
+
+  g_object_set(app->balance, "brightness", requested, nullptr);
+  gdouble applied = 0.0;
+  g_object_get(app->balance, "brightness", &applied, nullptr);  // log the real value
+  g_print("DYNAMIC_PROPERTY element=%s property=brightness value=%.2f\n",
+          GST_ELEMENT_NAME(app->balance), applied);
+  return G_SOURCE_CONTINUE;
+}
+
 /** Abort if EOS does not come back: the file would not be finalized. */
 static gboolean on_eos_timeout(gpointer data) {
   App *app = static_cast<App *>(data);
@@ -254,6 +278,16 @@ static gboolean on_bus_message(GstBus *, GstMessage *msg, gpointer data) {
         gst_message_parse_state_changed(msg, &old_state, &new_state, nullptr);
         g_print("STATE_CHANGED %s -> %s\n",
                 gst_element_state_get_name(old_state), gst_element_state_get_name(new_state));
+        // Graph of the real running pipeline, written only when
+        // GST_DEBUG_DUMP_DOT_DIR is set (converted to PNG with dot -Tpng).
+        if (new_state == GST_STATE_PLAYING) {
+          GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(app->pipeline), GST_DEBUG_GRAPH_SHOW_ALL,
+                                    "monitor_sender_playing");
+          if (g_getenv("GST_DEBUG_DUMP_DOT_DIR")) {
+            g_print("DOT_GRAPH file=%s/monitor_sender_playing.dot\n",
+                    g_getenv("GST_DEBUG_DUMP_DOT_DIR"));
+          }
+        }
       }
       break;
     default:
@@ -282,6 +316,18 @@ int main(int argc, char *argv[]) {
           opt.pattern, opt.width, opt.height, opt.fps, opt.port, opt.output, opt.duration,
           opt.headless ? "yes" : "no", opt.jpeg_quality, opt.overlay_position);
 
+  // Create the output folder (e.g. artifacts/ right after scripts/clean.sh).
+  gchar *output_dir = g_path_get_dirname(opt.output);
+  const int mkdir_status = g_mkdir_with_parents(output_dir, 0755);
+  g_free(output_dir);
+  if (mkdir_status != 0) {
+    g_printerr("ERROR: cannot create the folder of %s: %s\n", opt.output, g_strerror(errno));
+    g_free(opt.pattern);
+    g_free(opt.output);
+    g_free(opt.overlay_position);
+    return EXIT_RUNTIME_ERROR;
+  }
+
   const std::string description = build_pipeline_description(opt);
   GError *error = nullptr;
   App app;
@@ -299,6 +345,7 @@ int main(int argc, char *argv[]) {
     return EXIT_RUNTIME_ERROR;
   }
 
+  app.balance = gst_bin_get_by_name(GST_BIN(app.pipeline), "video_balance");
   app.loop = g_main_loop_new(nullptr, FALSE);
   GstBus *bus = gst_element_get_bus(app.pipeline);
   gst_bus_add_watch(bus, on_bus_message, &app);
@@ -321,17 +368,27 @@ int main(int argc, char *argv[]) {
       app.duration_id = g_timeout_add(static_cast<guint>(opt.duration) * 1000,
                                       on_duration_elapsed, &app);
     }
+    app.dynamic_id = g_timeout_add(DYNAMIC_PERIOD_MS, on_dynamic_property, &app);
     g_main_loop_run(app.loop);
   }
+
+  // Network counter, read before NULL resets the sink.
+  GstElement *net_sink = gst_bin_get_by_name(GST_BIN(app.pipeline), "net_sink");
+  guint64 bytes_sent = 0;
+  g_object_get(net_sink, "bytes-served", &bytes_sent, nullptr);
+  gst_object_unref(net_sink);
+  g_print("NETWORK_BYTES_SENT=%" G_GUINT64_FORMAT "\n", bytes_sent);
 
   // Cleanup: NULL state releases devices, sockets and the output file.
   gst_element_set_state(app.pipeline, GST_STATE_NULL);
   remove_source(app.duration_id);
   remove_source(app.watchdog_id);
+  remove_source(app.dynamic_id);
   remove_source(app.sigint_id);
   remove_source(app.sigterm_id);
   gst_bus_remove_watch(bus);
   gst_object_unref(bus);
+  gst_object_unref(app.balance);
   gst_object_unref(app.pipeline);
   g_main_loop_unref(app.loop);
 
