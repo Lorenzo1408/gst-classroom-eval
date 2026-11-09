@@ -1,0 +1,10 @@
+# Force LF line endings: scripts break with CRLF ("$'\r': command not found")
+# if the repository is checked out on Windows.
+*.sh     text eol=lf
+*.cpp    text eol=lf
+*.conf   text eol=lf
+*.md     text eol=lf
+*.txt    text eol=lf
+*.yml    text eol=lf
+*.json   text eol=lf
+Dockerfile text eol=lf

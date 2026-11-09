@@ -1,0 +1,7 @@
+# Generated during build and verification (never committed)
+build/
+artifacts/
+
+# Local editor / OS files
+.DS_Store
+.vscode/

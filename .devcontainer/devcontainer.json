@@ -1,0 +1,36 @@
+{
+  "name": "GStreamer Video Monitoring - Lorenzo Bravard",
+
+  // Same image as the course repository (gst-classroom), trimmed to the
+  // GStreamer runtime, development headers and the noVNC virtual desktop.
+  "build": {
+    "dockerfile": "../environment/Dockerfile",
+    "context": ".."
+  },
+
+  "forwardPorts": [6080],
+
+  "portsAttributes": {
+    "6080": {
+      "label": "Virtual Desktop (noVNC)",
+      "protocol": "http",
+      "onAutoForward": "openBrowser"
+    },
+    "5900": {
+      "label": "Internal - VNC Server (do not use)",
+      "onAutoForward": "ignore"
+    }
+  },
+
+  // Start the virtual desktop as soon as the editor attaches.
+  "postAttachCommand": "nohup /usr/local/bin/start-classroom.sh >/tmp/startup.log 2>&1 &",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools"
+      ]
+    }
+  }
+}

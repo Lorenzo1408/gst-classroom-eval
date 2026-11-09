@@ -1,0 +1,21 @@
+# Local alternative to GitHub Codespaces (same image as the devcontainer).
+#   docker compose -f environment/docker-compose.yml up -d --build
+#   docker compose -f environment/docker-compose.yml exec classroom bash
+# Virtual desktop: http://localhost:6080
+
+# Explicit project name: without it, Compose would reuse the folder name
+# ("environment") and clash with the course repository's containers.
+name: gst-classroom-eval
+
+services:
+  classroom:
+    build:
+      context: ..
+      dockerfile: environment/Dockerfile
+    ports:
+      - "6080:6080"  # Virtual desktop (noVNC)
+    environment:
+      - DISPLAY=:0
+    volumes:
+      - ..:/workspace:cached
+    command: /usr/local/bin/start-classroom.sh
