@@ -121,7 +121,8 @@ Two changes, both in the repository:
   drops nothing: **150/150 frames, `RcvbufErrors` +0**.
 - Under the real load (full 3-branch sender, preview displayed, 45 s runs),
   qualities 30, 40 and 50 all gave 675/675 frames. Losses start between 60 and
-  70. Quality 30 keeps a margin of 2 below this threshold.
+  70. Quality 30 is about half of this threshold, which leaves a safety
+  margin.
 - The quality/loss trade-off is measured in more detail in `experiment.md`.
 
 ## 8. Alternative diagnosis considered and rejected

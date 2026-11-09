@@ -190,9 +190,11 @@ expect_rejected "non-numeric --width"   "${SENDER_ARGS[@]}" --width abc
 expect_rejected "unsupported --pattern" "${SENDER_ARGS[@]}" --pattern not-a-pattern
 expect_rejected "--fps 0"               "${SENDER_ARGS[@]}" --fps 0
 expect_rejected "unknown option"        "${SENDER_ARGS[@]}" --no-such-option
-rm -f "$RECORDING_FILE"   # a rejected run must not have created it, but be sure
+expect_rejected "unsupported --output format" "${SENDER_ARGS[@]}" --output "$ARTIFACTS_DIR/rejected.mp4"
+expect_rejected "negative --duration"   "${SENDER_ARGS[@]}" --duration -1
+rm -f "$RECORDING_FILE" "$ARTIFACTS_DIR/rejected.mp4"   # a rejected run must not create files, but be sure
 if (( REJECT_FAILURES == 0 )); then
-    pass INVALID_ARGUMENTS "6 invalid command lines rejected with status 2"
+    pass INVALID_ARGUMENTS "8 invalid command lines rejected with status 2"
 else
     failed INVALID_ARGUMENTS "$REJECT_FAILURES invalid command line(s) accepted"
 fi

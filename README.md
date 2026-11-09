@@ -147,15 +147,16 @@ Equivalent one-liner: `gst-play-1.0 recordings/sample.mkv`.
 
 ```
 build/monitor_sender --pattern NAME --width W --height H --fps FPS --port PORT
-                     --output FILE.mkv|.ts --duration SECONDS
+                     --output FILE.mkv|.ts [--duration SECONDS]
                      [--headless] [--jpeg-quality 1-100] [--overlay-position POS] [--help]
 ```
 
-- All options except the last three are required. Invalid, missing or
+- The options in brackets are optional. Invalid, missing or
   unsupported values are rejected with exit status **2**. A runtime error
   (for example a bus ERROR, reported with the element name and the debug
   information) gives status **1**. Success gives **0**.
-- `--duration 0` runs until Ctrl+C. In every case the application sends EOS,
+- Without `--duration` (or with `--duration 0`), the sender runs until
+  Ctrl+C or SIGTERM. In every case the application sends EOS,
   waits for it on the bus, sets the pipeline to NULL and releases everything.
 - **Dynamic property**: every 5 s, the `brightness` property of the element
   named **`video_balance`** (`videobalance`) cycles through 0.20, 0.00, −0.20

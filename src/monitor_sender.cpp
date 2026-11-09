@@ -43,7 +43,7 @@ struct Options {
   gint     fps              = -1;
   gint     port             = -1;
   gchar   *output           = nullptr;
-  gint     duration         = -1;   // -1 = not given, 0 = until Ctrl+C
+  gint     duration         = 0;    // optional, 0 = until Ctrl+C
   gboolean headless         = FALSE;
   gint     jpeg_quality     = 30;   // snow saturates the UDP buffer above ~60
   gchar   *overlay_position = nullptr;
@@ -79,7 +79,7 @@ static bool parse_options(int &argc, char **&argv, Options &opt) {
     {"fps",          0, 0, G_OPTION_ARG_INT,    &opt.fps,          "Frame rate (1-60)",                           "FPS"},
     {"port",         0, 0, G_OPTION_ARG_INT,    &opt.port,         "UDP port on 127.0.0.1 (1024-65535)",          "PORT"},
     {"output",       0, 0, G_OPTION_ARG_STRING, &opt.output,       "Recording file (.mkv or .ts)",                "FILE"},
-    {"duration",     0, 0, G_OPTION_ARG_INT,    &opt.duration,     "Seconds before EOS; 0 = until Ctrl+C",        "SECONDS"},
+    {"duration",     0, 0, G_OPTION_ARG_INT,    &opt.duration,     "Seconds before EOS (default 0 = until Ctrl+C)", "SECONDS"},
     {"headless",     0, 0, G_OPTION_ARG_NONE,   &opt.headless,     "No preview window (fakesink)",                nullptr},
     {"jpeg-quality", 0, 0, G_OPTION_ARG_INT,    &opt.jpeg_quality, "Network JPEG quality, 1-100 (default 30)",    "Q"},
     {"overlay-position", 0, 0, G_OPTION_ARG_STRING, &opt.overlay_position,
@@ -90,7 +90,8 @@ static bool parse_options(int &argc, char **&argv, Options &opt) {
   GOptionContext *context = g_option_context_new("- video monitoring sender");
   g_option_context_set_summary(context,
       "Live test pattern -> overlay -> tee -> preview + H.264 recording + RTP/JPEG over UDP.\n"
-      "--pattern, --width, --height, --fps, --port, --output and --duration are required.");
+      "--pattern, --width, --height, --fps, --port and --output are required.\n"
+      "Without --duration, the sender runs until Ctrl+C (always stopped through EOS).");
   g_option_context_add_main_entries(context, entries, nullptr);
   g_option_context_add_group(context, gst_init_get_option_group());
 
@@ -107,9 +108,9 @@ static bool parse_options(int &argc, char **&argv, Options &opt) {
   }
 
   if (!opt.pattern || opt.width == -1 || opt.height == -1 || opt.fps == -1 || opt.port == -1
-      || !opt.output || opt.duration == -1) {
+      || !opt.output) {
     return invalid("missing required option: --pattern, --width, --height, --fps, "
-                   "--port, --output and --duration are all required");
+                   "--port and --output are all required");
   }
 
   const std::string pattern = opt.pattern;

@@ -72,7 +72,7 @@ command-line options.
 | `ximagesink` (`preview_sink`) | Shows the preview in the virtual desktop. `handle-events=false` keeps it from blocking on X events under Xvfb (`autovideosink` stayed in PAUSED there). |
 | `x264enc` | H.264 encoder. `tune=zerolatency` disables look-ahead and B-frames for a live source, `speed-preset=ultrafast` keeps the CPU low, `key-int-max=15` gives a keyframe every second, and `bitrate=1500` kbit/s. |
 | `h264parse` | Converts the encoder output to the stream format and alignment that the muxer expects (`avc`, au) and provides the codec data. |
-| `matroskamux` | Packs H.264 into Matroska (`CONTAINER=matroska`). |
+| `matroskamux` | Packs H.264 into a Matroska file (`CONTAINER=matroska`), with timestamps, codec data, duration and a seek index (see section 10). |
 | `filesink` (`rec_sink`) | Writes the recording file. |
 | `jpegenc` | Encodes each frame as an independent JPEG image. |
 | `rtpjpegpay` | Splits each JPEG frame into RTP packets (RFC 2435). |
@@ -202,6 +202,76 @@ The script versions get the same behaviour with `gst-launch-1.0 -e` stopped by
 
 Branches B and C are identical in both modes. Only the display sinks change,
 so the test mode really exercises the recording and the network.
+
+## 10. Raw and compressed video; encoder, payloader, parser, muxer
+
+**Where the video is raw and where it is compressed** (caps read in
+`evidence/pipeline.png`):
+
+| Part | Caps | Elements |
+|---|---|---|
+| Sender, before the tee and branch A | `video/x-raw` (I420, then BGRx after `videoconvert`) | `videotestsrc` → capsfilter → `videobalance` → `timeoverlay` → `tee` → the 3 queues → `videoconvert` → preview sink. The inputs of `x264enc` and `jpegenc` are also raw. |
+| Sender, branch B | `video/x-h264` → `video/x-matroska` | after `x264enc`: `h264parse` → `matroskamux` → `filesink` |
+| Sender, branch C | `image/jpeg` → `application/x-rtp` | after `jpegenc`: `rtpjpegpay` → `udpsink` |
+| Receiver | `application/x-rtp` → `image/jpeg` → `video/x-raw` | `udpsrc` → `rtpjitterbuffer` → `rtpjpegdepay` are compressed; after `jpegdec`, `videocrop` → `videoconvert` → sink are raw |
+
+The overlay and the brightness change must be applied to raw video, before
+the encoders: that is why they are placed before the tee.
+
+**Encoder and RTP payloader do different jobs.**
+
+- The **encoder** (`jpegenc`, `x264enc`) changes the representation of the
+  image. It turns raw pixels into a compressed bitstream, with losses, and
+  decides the size and the quality (for example, a 960x540 I420 frame is
+  777 600 bytes raw, against about 162 KB as JPEG quality 30 on snow).
+- The **payloader** (`rtpjpegpay`) does not touch the image data. It only
+  prepares it for transport: it cuts each compressed frame into packets
+  that fit in one UDP datagram (MTU 1400 bytes by default, so about 115
+  packets per snow frame). It then adds to each packet:
+  - an RTP header: sequence number, 90 kHz timestamp, payload type 26, and
+    the marker bit on the last packet of the frame;
+  - the RFC 2435 JPEG header: type, quality factor, width/8, height/8 and
+    fragment offset. `rtpjpegpay` uses Q=255, so the quantization tables
+    are also sent in the first packet of each frame. The full JPEG headers
+    (markers, Huffman tables) are not sent.
+
+**Why the receiver needs a depayloader.** UDP delivers separate packets, while
+`jpegdec` expects one complete JPEG file per buffer. `rtpjpegdepay` does the
+reverse of the payloader:
+
+- it removes the RTP headers;
+- it reassembles the fragments of one frame (same timestamp, offsets, marker
+  bit);
+- it rebuilds the JPEG headers that RFC 2435 does not transmit: markers,
+  frame header with the image size, standard Huffman tables, and the
+  quantization tables received in the first packet.
+
+Without it, `application/x-rtp` cannot even be linked to `jpegdec`, which
+only accepts `image/jpeg`.
+
+**Why the receiver needs explicit caps.** `udpsrc` receives anonymous bytes.
+Nothing in a UDP datagram says "RTP, JPEG, 90 kHz". The caps on `udpsrc`
+give this information, so that `rtpjitterbuffer` (which needs the clock
+rate) and `rtpjpegdepay` (which only accepts `encoding-name=JPEG`) can be
+linked. See section 7.
+
+**Purpose of the parser (`h264parse`).** `x264enc` outputs an H.264 byte
+stream. `h264parse` cuts it into complete access units (one frame per
+buffer) and converts it to the `avc` format that `matroskamux` expects. It
+also extracts the SPS/PPS parameter sets as `codec_data`, which the muxer
+stores in the file header so that a decoder can start.
+
+**Purpose of the recording muxer (`matroskamux`).** An H.264 stream alone is a
+plain sequence of frames, with no container: no timestamps per frame, no
+total duration, no index, and no room for other tracks. The muxer wraps it in
+a Matroska file:
+
+- a header with the track description and the codec data;
+- clusters of frames with their timestamps;
+- at EOS, the duration and the Cues index used for seeking (section 8).
+
+This is what makes the file playable and seekable by any player
+(`gst-discoverer-1.0` reports "container: Matroska, video: H.264").
 
 ## Construction choice: option B, `gst_parse_launch()`
 
